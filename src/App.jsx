@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { LayoutDashboard, CalendarClock, ArrowDownCircle, ArrowUpCircle, Settings, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { COLORS, FONT_IMPORT } from './theme';
-import { getSession, onAuthChange, getPreferences } from './lib/api';
+import { getSession, onAuthChange, getPreferences, signOut } from './lib/api';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import Auth from './screens/Auth';
 import Onboarding from './screens/Onboarding';
 import Dashboard from './screens/Dashboard';
@@ -21,13 +22,23 @@ const TABS = [
 const CURRENCY = 'XOF'; // à rendre configurable plus tard si besoin
 const SIDEBAR_WIDTH_OPEN = 220;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
+const INACTIVITY_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
+}
+
+function AppInner() {
   const [session, setSession] = useState(undefined); // undefined = pas encore vérifié
   const [onboarded, setOnboarded] = useState(undefined);
   const [startMonth, setStartMonth] = useState(null);
   const [tab, setTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false); // replié (icônes seules) par défaut
+  const inactivityTimer = useRef(null);
 
   const checkOnboarding = useCallback(async () => {
     try {
@@ -49,6 +60,28 @@ export default function App() {
     if (session) checkOnboarding();
     else setOnboarded(undefined);
   }, [session, checkOnboarding]);
+
+  // Mise en veille après 5 minutes sans activité : déconnexion automatique, l'utilisateur
+  // devra se reconnecter (protège les données si l'appareil reste ouvert sans surveillance).
+  useEffect(() => {
+    if (!session) return undefined;
+
+    const resetTimer = () => {
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+      inactivityTimer.current = setTimeout(() => {
+        signOut().catch(() => {});
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(ev => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, resetTimer));
+      if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    };
+  }, [session]);
 
   if (session === undefined || (session && onboarded === undefined)) {
     return (
@@ -121,7 +154,9 @@ export default function App() {
 
       {/* Contenu de l'écran actif */}
       <div style={{ flex: 1, minWidth: 0, overflowX: 'hidden' }}>
-        <ActiveComp currency={CURRENCY} startMonth={startMonth} />
+        <ErrorBoundary key={tab}>
+          <ActiveComp currency={CURRENCY} startMonth={startMonth} />
+        </ErrorBoundary>
       </div>
     </div>
   );
