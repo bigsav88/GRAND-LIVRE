@@ -66,6 +66,50 @@ export function PieBlock({ title, data, currency }) {
   );
 }
 
+export function MonthPicker({ value, onChange }) {
+  return (
+    <input
+      type="month"
+      value={value}
+      onChange={e => e.target.value && onChange(e.target.value)}
+      aria-label="Aller directement à un mois"
+      title="Aller directement à un mois"
+      style={{
+        background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.text,
+        fontFamily: 'Inter', fontSize: 12, borderRadius: 6, padding: '7px 8px', colorScheme: 'dark', cursor: 'pointer',
+      }}
+    />
+  );
+}
+
+export function TotalsBar({ recettes, depenses, currency, recetteLabel = 'Entrées', depenseLabel = 'Dépenses', showEcart = true }) {
+  const ecart = recettes - depenses;
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 20, display: 'flex', gap: 20, flexWrap: 'wrap',
+      background: 'rgba(18,21,31,0.92)', backdropFilter: 'blur(6px)', border: `1px solid ${COLORS.border}`,
+      borderRadius: 8, padding: '10px 16px', marginBottom: 20, fontSize: 13,
+    }}>
+      <span>
+        <span style={{ color: COLORS.dim, marginRight: 6 }}>{recetteLabel}</span>
+        <span className="num" style={{ color: COLORS.green }}>{formatCurrency(recettes, currency)}</span>
+      </span>
+      <span>
+        <span style={{ color: COLORS.dim, marginRight: 6 }}>{depenseLabel}</span>
+        <span className="num" style={{ color: COLORS.red }}>{formatCurrency(depenses, currency)}</span>
+      </span>
+      {showEcart && (
+        <span style={{ marginLeft: 'auto' }}>
+          <span style={{ color: COLORS.dim, marginRight: 6 }}>Écart</span>
+          <span className="num" style={{ color: ecart >= 0 ? COLORS.green : COLORS.red, fontWeight: 600 }}>
+            {ecart > 0 ? '+' : ''}{formatCurrency(ecart, currency)}
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function ConfirmModal({ open, title, message, options, onClose }) {
   if (!open) return null;
   return (
@@ -90,6 +134,32 @@ export function ConfirmModal({ open, title, message, options, onClose }) {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function CategoryTable({ title, type, cats, currency, accent }) {
+  const sorted = [...cats].sort((a, b) => b.reel - a.reel);
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <SectionLabel>{title}</SectionLabel>
+      <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 8, marginTop: 10, overflow: 'hidden' }}>
+        {sorted.length === 0 ? (
+          <div style={{ color: COLORS.dim, fontSize: 12, textAlign: 'center', padding: '24px 0' }}>Aucune donnée pour cette période.</div>
+        ) : sorted.map(c => {
+          const isEpargne = type === 'depense' && c.budget_type === 'epargne';
+          const ecart = computeEcart(c.prevu, c.reel, type, isEpargne);
+          const good = ecart >= 0;
+          return (
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px 110px 110px', gap: 8, alignItems: 'center', padding: '8px 14px', borderTop: `1px solid ${COLORS.borderSoft}`, fontSize: 12 }}>
+              <span style={{ color: COLORS.warm }}>{c.name}</span>
+              <span className="num" style={{ textAlign: 'right', color: COLORS.dim }}>{formatCurrency(c.prevu, currency)}</span>
+              <span className="num" style={{ textAlign: 'right', color: accent }}>{formatCurrency(c.reel, currency)}</span>
+              <span className="num" style={{ textAlign: 'right', color: good ? COLORS.green : COLORS.red }}>{ecart > 0 ? '+' : ''}{formatCurrency(ecart, currency)}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
