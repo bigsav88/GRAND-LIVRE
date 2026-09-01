@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { COLORS, monthKey, shiftMonth, labelFor, formatCurrency } from '../theme';
-import { SectionLabel, ConfirmModal, TextInput } from '../components/ui';
+import { SectionLabel, ConfirmModal, TextInput, MonthPicker, TotalsBar } from '../components/ui';
 import { getCategories, getForecastForMonth, setForecastValue } from '../lib/api';
 
-export default function Prevu({ currency }) {
+export default function Prevu({ currency, startMonth }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
   const [categories, setCategories] = useState([]);
   const [forecast, setForecast] = useState(new Map());
@@ -30,6 +30,13 @@ export default function Prevu({ currency }) {
     focusRef.current[subId] = forecast.get(subId) || 0;
   };
 
+  // Met à jour uniquement l'état local après une sauvegarde — jamais de rechargement complet
+  // de la page ici, pour ne pas faire disparaître momentanément la liste (ce qui faisait
+  // perdre la position de défilement).
+  const applyLocalForecast = (subId, value) => {
+    setForecast(prev => { const m = new Map(prev); m.set(subId, value); return m; });
+  };
+
   const handleBlur = async (subId, subName, catName) => {
     const before = focusRef.current[subId];
     delete focusRef.current[subId];
@@ -38,7 +45,7 @@ export default function Prevu({ currency }) {
     if (before === after) return;
     if (before === 0) {
       await setForecastValue(subId, month, after, true);
-      load();
+      applyLocalForecast(subId, after);
     } else {
       setPendingChange({ subId, subName, catName, newValue: after });
     }
@@ -47,21 +54,31 @@ export default function Prevu({ currency }) {
   const resolvePending = async (applyToFuture) => {
     if (pendingChange) {
       await setForecastValue(pendingChange.subId, month, pendingChange.newValue, applyToFuture);
-      load();
+      applyLocalForecast(pendingChange.subId, pendingChange.newValue);
     }
     setPendingChange(null);
   };
 
+  const totals = useMemo(() => {
+    const sum = (type) => categories
+      .filter(c => c.type === type)
+      .reduce((s, c) => s + c.budget_subcategories.reduce((ss, sub) => ss + (forecast.get(sub.id) || 0), 0), 0);
+    return { recettes: sum('recette'), depenses: sum('depense') };
+  }, [categories, forecast]);
+
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 20px 60px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8 }}>
-        <button onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Mois précédent" style={navBtnStyle}><ChevronLeft size={16} /></button>
+        <button onClick={() => setMonth(m => shiftMonth(m, -1))} disabled={!!startMonth && month <= startMonth} aria-label="Mois précédent" style={{ ...navBtnStyle, ...(startMonth && month <= startMonth ? disabledStyle : {}) }}><ChevronLeft size={16} /></button>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, minWidth: 180, textAlign: 'center' }}>{labelFor(month)}</div>
         <button onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Mois suivant" style={navBtnStyle}><ChevronRight size={16} /></button>
+        <MonthPicker value={month} onChange={setMonth} />
       </div>
-      <div style={{ fontSize: 12, color: COLORS.dim, marginBottom: 24 }}>
+      <div style={{ fontSize: 12, color: COLORS.dim, marginBottom: 16 }}>
         Un montant reste valable pour les mois suivants tant que tu ne le changes pas. Modifier une valeur existante te demandera si le changement vaut pour ce mois seulement ou aussi pour la suite.
       </div>
+
+      {!loading && <TotalsBar recettes={totals.recettes} depenses={totals.depenses} currency={currency} recetteLabel="Entrées prévues" depenseLabel="Dépenses prévues" />}
 
       {loading ? (
         <div style={{ color: COLORS.muted, padding: '40px 0', textAlign: 'center' }}>Chargement…</div>
@@ -109,3 +126,4 @@ export default function Prevu({ currency }) {
 }
 
 const navBtnStyle = { background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 8, cursor: 'pointer', color: COLORS.text, display: 'flex' };
+const disabledStyle = { opacity: 0.35, cursor: 'not-allowed' };

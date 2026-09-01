@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { COLORS, FONT_IMPORT, monthKey } from '../theme';
-import { PrimaryButton, GhostButton, TextInput, SectionLabel } from '../components/ui';
+import { PrimaryButton, GhostButton, TextInput, SectionLabel, MonthPicker } from '../components/ui';
 import { BUDGET_TYPES } from '../theme';
 import { addCategory, addSubcategory, setForecastValue, updatePreferences } from '../lib/api';
 
@@ -30,6 +30,7 @@ function buildInitialSelection(list) {
 export default function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
   const [salaire, setSalaire] = useState('');
+  const [startMonth, setStartMonth] = useState(() => monthKey(new Date()));
   const [recettes, setRecettes] = useState(() => buildInitialSelection(SUGGESTED_RECETTES));
   const [depenses, setDepenses] = useState(() => buildInitialSelection(SUGGESTED_DEPENSES));
   const [targets, setTargets] = useState({ essentiel: 50, envie: 30, epargne: 20 });
@@ -52,14 +53,15 @@ export default function Onboarding({ onDone }) {
     setSaving(true);
     setError('');
     try {
-      const currentMonth = monthKey(new Date());
+      const currentMonth = startMonth;
 
-      // 1. Préférences (salaire + répartition cible)
+      // 1. Préférences (salaire + répartition cible + mois de démarrage)
       await updatePreferences({
         salaire_prevu: Number(salaire) || 0,
         target_essentiel: targets.essentiel,
         target_envie: targets.envie,
         target_epargne: targets.epargne,
+        start_month: startMonth,
         onboarded_at: new Date().toISOString(),
       });
 
@@ -104,6 +106,14 @@ export default function Onboarding({ onDone }) {
             <SectionLabel>Revenu principal</SectionLabel>
             <div style={{ fontSize: 13, color: COLORS.warm, margin: '8px 0 16px' }}>Quel est ton salaire mensuel habituel ?</div>
             <TextInput type="number" min="0" placeholder="0" value={salaire} onChange={e => setSalaire(e.target.value)} />
+
+            <div style={{ marginTop: 22 }}>
+              <SectionLabel>Mois de démarrage</SectionLabel>
+              <div style={{ fontSize: 13, color: COLORS.warm, margin: '8px 0 10px' }}>
+                À partir de quel mois veux-tu commencer à suivre ton budget ? (tu ne pourras pas naviguer avant ce mois)
+              </div>
+              <MonthPicker value={startMonth} onChange={setStartMonth} />
+            </div>
           </div>
         )}
 

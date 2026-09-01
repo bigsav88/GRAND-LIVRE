@@ -1,13 +1,14 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Trash2, Camera, Loader2, Image as ImageIcon } from 'lucide-react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { ChevronLeft, ChevronRight, Plus, Trash2, Camera, Loader2, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { COLORS, monthKey, shiftMonth, labelFor, formatCurrency } from '../theme';
-import { PrimaryButton, GhostButton, TextInput } from '../components/ui';
-import { getCategories, getEntriesForMonth, addEntry, deleteEntry, uploadReceipt, extractReceipt, getReceiptSignedUrl } from '../lib/api';
+import { PrimaryButton, GhostButton, TextInput, MonthPicker, TotalsBar } from '../components/ui';
+import { getCategories, getEntriesForMonth, getMonthlyActuals, addEntry, deleteEntry, uploadReceipt, extractReceipt, getReceiptSignedUrl, getPreferences } from '../lib/api';
 
-export default function Depenses({ currency }) {
+export default function Depenses({ currency, startMonth }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
   const [categories, setCategories] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [otherActuals, setOtherActuals] = useState(0); // total recettes du mois, pour la barre
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ subcategoryId: '', amount: '', entryDate: new Date().toISOString().slice(0, 10), comment: '' });
   const [saving, setSaving] = useState(false);
@@ -15,13 +16,24 @@ export default function Depenses({ currency }) {
   const [receiptPreview, setReceiptPreview] = useState(null);
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState('');
+  const [allowFuture, setAllowFuture] = useState(false);
   const fileInputRef = useRef(null);
+
+  const isFutureMonth = month > monthKey(new Date());
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cats, ent] = await Promise.all([getCategories(), getEntriesForMonth(month)]);
-    setCategories(cats.filter(c => c.type === 'depense'));
+    const [allCats, ent, prefs] = await Promise.all([getCategories(), getEntriesForMonth(month), getPreferences()]);
+    const depCats = allCats.filter(c => c.type === 'depense');
+    setCategories(depCats);
     setEntries(ent);
+    setAllowFuture(!!prefs.allow_future_actuals);
+
+    const recCats = allCats.filter(c => c.type === 'recette');
+    const actuals = await getMonthlyActuals(month);
+    const recTotal = recCats.reduce((s, c) => s + c.budget_subcategories.reduce((ss, sub) => ss + (actuals.get(sub.id) || 0), 0), 0);
+    setOtherActuals(recTotal);
+
     setLoading(false);
   }, [month]);
 
@@ -62,6 +74,7 @@ export default function Depenses({ currency }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!form.subcategoryId || !form.amount) return;
+    if (isFutureMonth && !allowFuture) return;
     setSaving(true);
     try {
       await addEntry({
@@ -90,18 +103,31 @@ export default function Depenses({ currency }) {
     window.open(url, '_blank');
   };
 
-  const total = depenseEntries.reduce((s, e) => s + Number(e.amount), 0);
+  const total = useMemo(() => depenseEntries.reduce((s, e) => s + Number(e.amount), 0), [depenseEntries]);
+  const blocked = isFutureMonth && !allowFuture;
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 20px 60px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-        <button onClick={() => setMonth(m => shiftMonth(m, -1))} aria-label="Mois précédent" style={navBtnStyle}><ChevronLeft size={16} /></button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+        <button onClick={() => setMonth(m => shiftMonth(m, -1))} disabled={!!startMonth && month <= startMonth} aria-label="Mois précédent" style={{ ...navBtnStyle, ...(startMonth && month <= startMonth ? disabledStyle : {}) }}><ChevronLeft size={16} /></button>
         <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, minWidth: 180, textAlign: 'center' }}>{labelFor(month)}</div>
         <button onClick={() => setMonth(m => shiftMonth(m, 1))} aria-label="Mois suivant" style={navBtnStyle}><ChevronRight size={16} /></button>
-        <div style={{ marginLeft: 'auto', fontSize: 13, color: COLORS.red }} className="num">Total : {formatCurrency(total, currency)}</div>
+        <MonthPicker value={month} onChange={setMonth} />
       </div>
 
-      <form onSubmit={submit} style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: 16, marginBottom: 24 }}>
+      {!loading && <TotalsBar recettes={otherActuals} depenses={total} currency={currency} recetteLabel="Recettes de ce mois" depenseLabel="Dépenses de ce mois" />}
+
+      {blocked && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: COLORS.panel, border: `1px solid ${COLORS.gold}`, borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 13 }}>
+          <AlertTriangle size={16} style={{ color: COLORS.gold, flexShrink: 0 }} />
+          <span>
+            {labelFor(month)} n'a pas encore commencé — la saisie de dépenses réelles est désactivée pour ce mois.
+            Active « Renseigner les mois à venir » dans Préférences si tu veux tester à l'avance.
+          </span>
+        </div>
+      )}
+
+      <form onSubmit={submit} style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: 16, marginBottom: 24, opacity: blocked ? 0.5 : 1, pointerEvents: blocked ? 'none' : 'auto' }}>
         <div style={{ display: 'flex', gap: 12, marginBottom: 14, alignItems: 'center' }}>
           <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
           <GhostButton type="button" onClick={() => fileInputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -140,7 +166,7 @@ export default function Depenses({ currency }) {
             <TextInput value={form.comment} onChange={e => setForm({ ...form, comment: e.target.value })} placeholder="ex. marchand, contexte de la dépense" />
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
-            <PrimaryButton type="submit" disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.7 : 1 }}>
+            <PrimaryButton type="submit" disabled={saving || blocked} style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.7 : 1 }}>
               <Plus size={14} /> Enregistrer
             </PrimaryButton>
           </div>
@@ -180,5 +206,6 @@ export default function Depenses({ currency }) {
 }
 
 const navBtnStyle = { background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 8, cursor: 'pointer', color: COLORS.text, display: 'flex' };
+const disabledStyle = { opacity: 0.35, cursor: 'not-allowed' };
 const labelStyle = { fontSize: 11, color: COLORS.dim, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 4 };
 const inputBoxStyle = { background: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.text, fontFamily: 'Inter', fontSize: 13, borderRadius: 6, padding: '8px 10px' };
