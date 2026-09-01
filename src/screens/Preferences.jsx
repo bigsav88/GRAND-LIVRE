@@ -45,6 +45,7 @@ export default function Preferences() {
       start_month: prefs.start_month,
       allow_future_actuals: prefs.allow_future_actuals,
       notify_unbalanced: prefs.notify_unbalanced,
+      hide_salary: prefs.hide_salary,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -139,6 +140,12 @@ export default function Preferences() {
           hint="Un message s'affichera sur le tableau de bord, au maximum une fois par semaine."
           checked={!!prefs.notify_unbalanced}
           onChange={v => setPrefs({ ...prefs, notify_unbalanced: v })}
+        />
+        <ToggleRow
+          label="Masquer le montant du salaire"
+          hint="Le salaire s'affiche masqué (••••••) sur l'écran Prévisionnel, pour tous les mois — un clic sur l'œil le révèle temporairement."
+          checked={!!prefs.hide_salary}
+          onChange={v => setPrefs({ ...prefs, hide_salary: v })}
         />
 
         <PrimaryButton onClick={savePrefs} disabled={targetSum !== 100} style={{ opacity: targetSum !== 100 ? 0.5 : 1, marginTop: 4 }}>

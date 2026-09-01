@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import { COLORS, monthKey, shiftMonth, labelFor, formatCurrency } from '../theme';
 import { SectionLabel, ConfirmModal, TextInput, MonthPicker, TotalsBar } from '../components/ui';
-import { getCategories, getForecastForMonth, setForecastValue } from '../lib/api';
+import { getCategories, getForecastForMonth, setForecastValue, getPreferences } from '../lib/api';
 
 export default function Prevu({ currency, startMonth }) {
   const [month, setMonth] = useState(() => monthKey(new Date()));
@@ -11,13 +11,16 @@ export default function Prevu({ currency, startMonth }) {
   const [localValues, setLocalValues] = useState({}); // subId -> string affiché
   const [loading, setLoading] = useState(true);
   const [pendingChange, setPendingChange] = useState(null);
+  const [hideSalary, setHideSalary] = useState(false);
+  const [revealed, setRevealed] = useState(() => new Set()); // sous-catégories démasquées temporairement
   const focusRef = useRef({});
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cats, fc] = await Promise.all([getCategories(), getForecastForMonth(month)]);
+    const [cats, fc, prefs] = await Promise.all([getCategories(), getForecastForMonth(month), getPreferences()]);
     setCategories(cats);
     setForecast(fc);
+    setHideSalary(!!prefs.hide_salary);
     const initial = {};
     for (const [subId, amount] of fc.entries()) initial[subId] = String(amount);
     setLocalValues(initial);
@@ -30,31 +33,45 @@ export default function Prevu({ currency, startMonth }) {
     focusRef.current[subId] = forecast.get(subId) || 0;
   };
 
-  // Met à jour uniquement l'état local après une sauvegarde — jamais de rechargement complet
-  // de la page ici, pour ne pas faire disparaître momentanément la liste (ce qui faisait
-  // perdre la position de défilement).
+  // Met à jour l'état local (montant ET texte affiché) après une sauvegarde — jamais de
+  // rechargement complet ici, pour ne pas faire disparaître momentanément la liste. Les deux
+  // états (forecast et localValues) sont maintenant TOUJOURS synchronisés ensemble : c'est ce
+  // qui manquait avant et pouvait laisser le champ affiché dans un état incohérent après une
+  // suppression de valeur (ex. salaire ou loyer remis à 0).
   const applyLocalForecast = (subId, value) => {
     setForecast(prev => { const m = new Map(prev); m.set(subId, value); return m; });
+    setLocalValues(prev => ({ ...prev, [subId]: String(value) }));
   };
 
   const handleBlur = async (subId, subName, catName) => {
     const before = focusRef.current[subId];
     delete focusRef.current[subId];
     if (before === undefined) return;
-    const after = Number(localValues[subId]) || 0;
+    const raw = localValues[subId];
+    const after = raw === '' || raw === undefined ? 0 : (Number(raw) || 0);
     if (before === after) return;
-    if (before === 0) {
-      await setForecastValue(subId, month, after, true);
-      applyLocalForecast(subId, after);
-    } else {
-      setPendingChange({ subId, subName, catName, newValue: after });
+    try {
+      if (before === 0) {
+        await setForecastValue(subId, month, after, true);
+        applyLocalForecast(subId, after);
+      } else {
+        setPendingChange({ subId, subName, catName, newValue: after });
+      }
+    } catch (err) {
+      // En cas d'échec de sauvegarde, on revient à la valeur connue plutôt que de laisser
+      // le champ dans un état incertain.
+      setLocalValues(prev => ({ ...prev, [subId]: String(before) }));
     }
   };
 
   const resolvePending = async (applyToFuture) => {
     if (pendingChange) {
-      await setForecastValue(pendingChange.subId, month, pendingChange.newValue, applyToFuture);
-      applyLocalForecast(pendingChange.subId, pendingChange.newValue);
+      try {
+        await setForecastValue(pendingChange.subId, month, pendingChange.newValue, applyToFuture);
+        applyLocalForecast(pendingChange.subId, pendingChange.newValue);
+      } catch (err) {
+        // silencieux : le champ garde sa valeur affichée, l'utilisateur peut réessayer
+      }
     }
     setPendingChange(null);
   };
@@ -65,6 +82,11 @@ export default function Prevu({ currency, startMonth }) {
       .reduce((s, c) => s + c.budget_subcategories.reduce((ss, sub) => ss + (forecast.get(sub.id) || 0), 0), 0);
     return { recettes: sum('recette'), depenses: sum('depense') };
   }, [categories, forecast]);
+
+  const isSalaryCat = (catName) => catName.toLowerCase().includes('salaire');
+  const toggleReveal = (subId) => {
+    setRevealed(prev => { const s = new Set(prev); s.has(subId) ? s.delete(subId) : s.add(subId); return s; });
+  };
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 20px 60px' }}>
@@ -92,19 +114,35 @@ export default function Prevu({ currency, startMonth }) {
             {categories.filter(c => c.type === type).map(cat => (
               <div key={cat.id} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 8, marginBottom: 10, padding: '8px 12px' }}>
                 <div style={{ fontFamily: "'Fraunces', serif", fontSize: 14, marginBottom: 6 }}>{cat.name}</div>
-                {cat.budget_subcategories.map(sub => (
-                  <div key={sub.id} style={{ display: 'grid', gridTemplateColumns: '1fr 130px', alignItems: 'center', padding: '4px 0' }}>
-                    <span style={{ fontSize: 13, color: COLORS.warm }}>{sub.name}</span>
-                    <TextInput
-                      type="number"
-                      value={localValues[sub.id] ?? ''}
-                      onChange={e => setLocalValues(v => ({ ...v, [sub.id]: e.target.value }))}
-                      onFocus={() => handleFocus(sub.id)}
-                      onBlur={() => handleBlur(sub.id, sub.name, cat.name)}
-                      style={{ textAlign: 'right' }}
-                    />
-                  </div>
-                ))}
+                {cat.budget_subcategories.map(sub => {
+                  const masked = hideSalary && isSalaryCat(cat.name) && !revealed.has(sub.id);
+                  return (
+                    <div key={sub.id} style={{ display: 'grid', gridTemplateColumns: '1fr 28px 130px', alignItems: 'center', padding: '4px 0', gap: 6 }}>
+                      <span style={{ fontSize: 13, color: COLORS.warm }}>{sub.name}</span>
+                      {hideSalary && isSalaryCat(cat.name) ? (
+                        <button
+                          onClick={() => toggleReveal(sub.id)}
+                          aria-label={masked ? 'Afficher' : 'Masquer'}
+                          style={{ background: 'transparent', border: 'none', color: COLORS.dim, cursor: 'pointer', display: 'flex', justifyContent: 'center' }}
+                        >
+                          {masked ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      ) : <span />}
+                      {masked ? (
+                        <div style={{ textAlign: 'right', fontFamily: "'IBM Plex Mono', monospace", fontSize: 14, color: COLORS.dim, letterSpacing: 2 }}>••••••</div>
+                      ) : (
+                        <TextInput
+                          type="number"
+                          value={localValues[sub.id] ?? ''}
+                          onChange={e => setLocalValues(v => ({ ...v, [sub.id]: e.target.value }))}
+                          onFocus={() => handleFocus(sub.id)}
+                          onBlur={() => handleBlur(sub.id, sub.name, cat.name)}
+                          style={{ textAlign: 'right' }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>
